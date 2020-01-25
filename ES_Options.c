@@ -39,17 +39,19 @@
 #define ENDDATE					20180603	
 #define BARPERIOD					1440		//	bar period in minutes
 
-#define RISKFREE					0.02		//risk free rate
+#define RISKFREE					0.02		// risk free rate
 #define EXPIREWEEKS				1			// weeks expiration
 #define DELTACALL					16. 		// delta of the call contract
 #define DELTAPUT					16.		// delta of the put contract
 
-#define CONTRACTSCALL			1			// contract number of the upper combo leg
-#define CONTRACTSPUT				1			// contract number of the lower combo leg
+#define CONTRACTSCALL			1			// contract number of the call combo leg
+#define CONTRACTSPUT				1			// contract number of the put combo leg
 
 #define ZERO_COST								// test with no spread and commission
 
-#define RANGE				0.003				// order book range, +/-0.1%
+#define RANGE						0.003				// order book range, +/-0.1%
+
+#define EXITHOURS					24
 
 function run()
 {
@@ -99,7 +101,7 @@ function run()
 	int ExpireDays = optimize(EXPIREWEEKS*7,7,6*7,1);
 	
 	//Setup Strangle
-	if(NumOpenLong == 0 and NumOpenShort == 0 and dow()==1) 
+	if(NumOpenShort == 0 and NumOpenLong == 0 and dow()==1) 
 	{
 		var CallStrikeCall = contractStrike(CALL,ExpireDays,CenterPrice,HistVol,RISKFREE,deltaCall/100.);
 		var CallStrikePut = contractStrike(PUT,ExpireDays,CenterPrice,HistVol,RISKFREE,deltaPut/100.);
@@ -129,9 +131,9 @@ function run()
 //		if(i < 3) continue;
 
 		for(i=1;i<=2;i++)
-			ThisTrade = enterLong(1*comboLeg(i));
+			ThisTrade = enterShort(1*comboLeg(i));
 	}
-	
+		
 //temporary bool to register risingPrices
 	bool risingPrices;
 
@@ -160,21 +162,62 @@ function run()
 	if(bidVol>askVol) risingPrices=true;
 #endif
 	
-	
+	static var CallStrike, PutStrike, contractExpiry=0;
 	for(current_trades) 
 	{
-		if(dow()==2) 
+		if(TradeIsCall) 
 		{
-			if(TradeIsCall)
-			{
-				printf("\nCall: Contract days: %.2f\n Strike: %.2f",contractDays(ThisTrade),TradeStrike);
-			}
-			if(TradeIsPut)
-			{
-				printf("\nPut: Contract days: %.2f\n Strike: %.2f",contractDays(ThisTrade),TradeStrike);
-			}
+			CallStrike = TradeStrike;
+//			if(dow()==2) printf("\nCall: Contract days: %.2f\n Strike: %.2f",contractDays(ThisTrade),TradeStrike);
 		}
-
-//		contractDays(ThisTrade);
+		else if(TradeIsPut)
+		{
+			PutStrike = TradeStrike;	
+			contractExpiry = contractDays(ThisTrade);
+//			if(dow()==2) printf("\nPut: Contract days: %.2f\n Strike: %.2f",contractDays(ThisTrade),TradeStrike);
+		} 
 	}
+	
+	risingPrices=true;
+	
+////	if(dow()==2) printf("\n%i",NumOpenTotal);
+
+	
+	if(NumOpenTotal==2 and contractExpiry > EXITHOURS/24.)
+	{
+		if(risingPrices==true and CenterPrice>CallStrike)
+		{
+			contract(0); //ONLY FOR PRILIMINARY TESTING
+	//		contract(FUTURE,contractExpiry,0);
+	
+			enterLong(CONTRACTSCALL);
+	
+//			printf("\nImbalance towards rising prices and prices higher than call strike. \nEnter long underlying.");
+	//		printf("\nEnter %i long contracts with expiry of %.0f days.",CONTRACTSCALL,contractExpiry);
+//			plot("hedge call",CenterPrice*1.1,MAIN|DOT,RED);
+		}
+	//	else if(risingPrices==false and CenterPrice<PutStrike)
+		else if(risingPrices==true and CenterPrice<PutStrike) //ONLY FOR PRIMARY TESTING
+		{
+			contract(0); //ONLY FOR PRILIMINARY TESTING
+	//		contract(FUTURE,contractExpiry,0);
+	
+			enterShort(CONTRACTSPUT);
+//			printf("\nImbalance towards falling prices and prices lower than put strike. \nEnter short underlying.");
+	//		printf("\nEnter %i short contracts with expiry of %.0f days.",CONTRACTSPUT,contractExpiry);
+//			plot("hedge put",CenterPrice*0.9,MAIN|DOT,BLUE);
+		}
+	}
+	
+	if(contractExpiry <= EXITHOURS/24.) 
+	{
+		for(current_trades)
+		{
+			if(!(TradeIsCall or TradeIsPut)) //probably not needed
+				exitLong(); exitShort();
+		}
+	}
+	
+//	if(dow()==2) printf("\n %i %i",NumOpenLong,NumOpenShort);
+
 }
