@@ -128,11 +128,14 @@ function run()
 		}
 //		if(i < 3) continue;
 
-		for(i=1;i<=3;i++)
+		for(i=1;i<=2;i++)
 			ThisTrade = enterLong(1*comboLeg(i));
 	}
 	
-	
+//temporary bool to register risingPrices
+	bool risingPrices;
+
+#ifdef TRADE_IMBALANCE
 //	OrderFlow imbalance ////////////////////////////////////////////////////////////////////////////////////////////////////
 //	data //////////////////////////////////////////////////
 	vars Prices = series(CenterPrice);
@@ -154,8 +157,24 @@ function run()
 	var askVol = cpd(askPriceLevel);
 	var bidVol = cpd(-bidPriceLevel);
 	
-	//temporary bool to register risingPrices
-	bool risingPrices;
-	
 	if(bidVol>askVol) risingPrices=true;
+#endif
+	
+	
+	for(current_trades) 
+	{
+		if(dow()==2) 
+		{
+			if(TradeIsCall)
+			{
+				printf("\nCall: Contract days: %.2f\n Strike: %.2f",contractDays(ThisTrade),TradeStrike);
+			}
+			if(TradeIsPut)
+			{
+				printf("\nPut: Contract days: %.2f\n Strike: %.2f",contractDays(ThisTrade),TradeStrike);
+			}
+		}
+
+//		contractDays(ThisTrade);
+	}
 }
