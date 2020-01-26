@@ -6,20 +6,23 @@
 
 //Opposite for put.
 
-//
 //Order flow imbalance is detected by comparing the ask volume with the bid volume. Higher ask volume indicates rising prices.
 //
 //Close the hedging position when price moves back to the neutral zone between call and put strikes. 
 //Use a hysteresis (small factor, like 0.0025) to avoid whipsaw trades.
-//
+
+//PN: what is hysteresis? Online:
+//			 Think of it as price confirmation. Price must not simply cross a single threshold, but move beyond that threshold X amount.
+//	PN: will multiply strikes by that factor for now
+
 //Do a walk-Forward optimization for Delta, imbalance threshold, hedge hysteresis threshold, and expiration (1..6 weeks).
 //
 //Script must be tested in backtest and in live trading with a IB demo account. Use the GET_BOOK command.
 
 
 //PLAN:
-//		(1): Plot a short strangle (add a long ES position --> long option or underlying??)
-//		(2): Sell 1-week Strangle 
+//		(1): Plot a short strangle
+//		(2): Sell 1-week Strangle, strikes determined by given delta 
 //		(3): Do (2) only on Monday
 //		(4): Long 1-week Normal (Option or Underlying? --> see (1)) --> I guess it's the option
 //		(5): Do (4) only when the price moves above call strike
@@ -40,19 +43,26 @@
 #define BARPERIOD					1440		//	bar period in minutes
 
 #define RISKFREE					0.02		// risk free rate
-#define EXPIREWEEKS				1			// weeks expiration
-#define DELTACALL					16. 		// delta of the call contract
-#define DELTAPUT					16.		// delta of the put contract
+#define EXPIREWEEKS				6			// weeks expiration
+#define DELTACALL					30. 		// delta of the call contract
+#define DELTAPUT					30.		// delta of the put contract
+#define HYSTFCT					0.0025	// hysteresis factor to reduce whipsaw trades
 
 #define CONTRACTSCALL			1			// contract number of the call combo leg
 #define CONTRACTSPUT				1			// contract number of the put combo leg
 
 #define ZERO_COST								// test with no spread and commission
 
-#define RANGE						0.003				// order book range, +/-0.1%
+#define RANGE						0.003		// order book range, +/-0.1%
 
-#define EXITHOURS					24
+#define EXITHOURS					.50
 
+var objective()
+{
+  if(NumWinTotal < 5) // minimum 5 trades
+	  return -1;
+  return(WinTotal-LossTotal)/MarginMax;
+}
 
 function udlLong()
 {
@@ -91,31 +101,30 @@ function run()
 	EndDate = ENDDATE;
 	
 	BarPeriod = BARPERIOD;
-//	LookBack = 0;
+	LookBack = 80*1440/BarPeriod;
 
-//	NumCores = -1;
-//	Outlier = 2;
-//	MonteCarlo = 0;
-//
-//// set up walk-forward parameters
-//	int TST = 4*1440/BarPeriod; //number of days in test period
-//	int TRN = 8*1440/BarPeriod; //number of days in training period
-//	DataSplit = 100*TRN/(TST+TRN);
-//	WFOPeriod = TST+TRN;	
-//	if(ReTrain) 
-//	{
-//		SelectWFO = -1;
-//	}
+#ifdef CAPITAL
+	Capital = slider(1,CAPITAL,0,2*CAPITAL,"Capital",0);
+#endif
+
+// WFO ///////////////////////////////
+#ifdef WFA
+	set(PARAMETERS);
+	NumWFOCycles = 4;
+#endif
 
 	assetList(ASSETLIST);
 	History = HISTORY;	//HISTORY; 
 	
-	asset(SYMBOL);
+//	asset(SYMBOL);
 	
+while(asset(loop(SYMBOL)))
+{	
 	contractUpdate(Asset,0,CALL|PUT);
+//	contractUpdate(Asset,0,CALL|PUT|FUTURE); once we trade on ES
 	var CenterPrice = contractUnderlying();
 	var HistVol = Volatility(series(price()),20);
-	
+//	printf("\n %f",HistVol);
 	Multiplier = 100;
 	Commission = 1.0/Multiplier;
 
@@ -127,10 +136,9 @@ function run()
 	
 	var deltaCall = optimize(DELTACALL,DELTACALL-5,DELTACALL+5,1);
 	var deltaPut = optimize(DELTAPUT,DELTAPUT-5,DELTAPUT+5,1);
-	
 	int ExpireDays = optimize(EXPIREWEEKS*7,7,6*7,1);
 	
-	//Setup and enter Strangle
+	//Setup and enter Stranglen on Monday only
 	if(NumOpenShort == 0 and NumOpenLong == 0 and dow()==1) 
 	{
 		var CallStrikeCall = contractStrike(CALL,ExpireDays,CenterPrice,HistVol,RISKFREE,deltaCall/100.);
@@ -143,7 +151,7 @@ function run()
 			0,0,0,0))
 		{
 			printf("#\n%s - cannot find matching %s Strangle!",Asset,Algo);
-//			continue;
+			continue;
 		}
 
 	// check for valid prices		
@@ -151,14 +159,14 @@ function run()
 		for(i=1; i<=2; i++) 
 		{
 			comboLeg(i);
-			if((i == 1 && ContractBid < 0.05)
-				|| (i != 1 && ContractAsk < 0.05))
+			if(ContractBid < 0.01)
 			{
-//				printf("#\nNo valid price for %s %s leg %i",Asset,Algo,i);
+				printf("\nNo valid price for %s leg %i price %f date: %i",Asset,i,ContractBid,date());
 				break;
 			}
 		}
-//		if(i < 3) continue;
+
+		if(i < 3) continue;
 
 		for(i=1;i<=2;i++)
 			ThisTrade = enterShort(1*comboLeg(i));
@@ -192,31 +200,38 @@ function run()
 	if(bidVol>askVol) risingPrices=true;
 #endif
 	
-	static var CallStrike, PutStrike, contractExpiry=0.;
+	static var CallStrike, PutStrike, contractExpiry;
+	CallStrike = PutStrike = contractExpiry = 0.;
+	
 	for(current_trades) 
 	{
-		if(TradeIsCall) 
+		if(TradeIsCall)  
 		{
 			CallStrike = TradeStrike;
 //			if(dow()==2) printf("\nCall: Contract days: %.2f\n Strike: %.2f",contractDays(ThisTrade),TradeStrike);
 		}
-		else if(TradeIsPut)
+		else if(TradeIsPut) 
 		{
 			PutStrike = TradeStrike;	
 			contractExpiry = contractDays(ThisTrade);
-//			if(dow()==2) printf("\nPut: Contract days: %.2f\n Strike: %.2f",contractDays(ThisTrade),TradeStrike);
+//			if(dow()==2) printf("\nPut: Contract days: %.2f\n Strike: %.2f\n\n",contractDays(ThisTrade),TradeStrike);
 		} 
 	}
+	
+	if(CenterPrice!=0) plot("CenterPrice",CenterPrice,MAIN,BLUE);
+	if(CallStrike!=0) plot("CallStrike",CallStrike,MAIN,MAGENTA);
+	if(PutStrike!=0) plot("PutStrike",PutStrike,MAIN,ORANGE);
+//	plot("contractExpiry",contractExpiry,NEW,RED);
 	
 	risingPrices=true;
 	
 ////	if(dow()==2) printf("\n%i",NumOpenTotal);
+//		removed NumOpenTotal - replaced with strike check and udlLong/short
 
-	//removed NumOpenTotal - replaced with strike check and udlLong/short
 //		if(NumOpenTotal==2 and contractExpiry > EXITHOURS/24.)
 	if(CallStrike!=0 and PutStrike!=0 and contractExpiry > EXITHOURS/24.)
 	{
-		if(risingPrices==true and CenterPrice>CallStrike and udlLong()==0)
+		if(risingPrices==true and CenterPrice>CallStrike*(1+HYSTFCT) and udlLong()==0)
 		{
 			contract(0); //ONLY FOR PRILIMINARY TESTING
 	//		contract(FUTURE,contractExpiry,0);
@@ -227,8 +242,8 @@ function run()
 	//		printf("\nEnter %i long contracts with expiry of %.0f days.",CONTRACTSCALL,contractExpiry);
 //			plot("hedge call",CenterPrice*1.1,MAIN|DOT,RED);
 		}
-	//	else if(risingPrices==false and CenterPrice<PutStrike and udlShort()==0)
-		else if(risingPrices==true and CenterPrice<PutStrike and udlShort()==0) //ONLY FOR PRIMARY TESTING
+	//	else if(risingPrices==false and CenterPrice<PutStrike*(1-HYSTFCT) and udlShort()==0)
+		else if(risingPrices==true and CenterPrice<PutStrike*(1-HYSTFCT) and udlShort()==0) //ONLY FOR PRILIMINARY TESTING
 		{
 			contract(0); //ONLY FOR PRILIMINARY TESTING
 	//		contract(FUTURE,contractExpiry,0);
@@ -240,57 +255,37 @@ function run()
 		}
 	}
 	
-	for(current_trades)
-	{
-		if(!(TradeIsCall or TradeIsPut) and TradeIsOpen)
-		{
-			if(CenterPrice<CallStrike or contractExpiry <= EXITHOURS/24.) exitLong("u");
-			if(CenterPrice>PutStrike or contractExpiry <= EXITHOURS/24.) exitShort("u");
-		}
-	}
-	
-//	plot("CenterPrice",CenterPrice,NEW,RED);
-//	plot("CallStrike",CallStrike,NEW,RED);
-//	plot("PutStrike",PutStrike,NEW,RED);
-	
-	
-//	if(CenterPrice<CallStrike) //check CallStrike !=0 too?
+//	for(current_trades)
 //	{
-//		contract(0);
-//		exitLong("udl");
-//	}
-////	plot("CenterPrice",CenterPrice,NEW,BLUE);
-////	if(PutStrike>0) plot("PutStrike",PutStrike,0,RED);
-// 	
-// 	if(CenterPrice>PutStrike) 
-//	{
-////		plot("hedge put",CenterPrice*0.9,MAIN|DOT,BLUE);
-//		contract(0);
-//		exitShort("udl");
-//	}
-	
-	plot("contractExpiry",contractExpiry,NEW,RED);
-//	if(contractExpiry <= EXITHOURS/24.) 
-//	{
-////		plot("hedge put",CenterPrice*0.9,MAIN|DOT,BLUE);
-//		int longs=udlLong();
-//		int shorts=udlShort();
-//////		//DOES NOT WORK
-////		contract(0);
-////		exitLong("exp"); 
-////		exitShort("exp");
-////		//replaced with contract(0) above -->
-//		for(current_trades)
+//		if(!(TradeIsCall or TradeIsPut) and TradeIsOpen)
 //		{
-//			if(!(TradeIsCall or TradeIsPut) or (NumOpenTotal==(longs+shorts))) //probably not needed
-//			{
-//				exitLong(); 
-//				exitShort();
-//			}
-//				
+//			if(CenterPrice<CallStrike*(1-HYSTFCT) or contractExpiry <= EXITHOURS/24.) exitLong("u");
+//			if(CenterPrice>PutStrike*(1+HYSTFCT) or contractExpiry <= EXITHOURS/24.) exitShort("u");
+//		}
+//		else if(TradeIsCall or TradeIsPut) 
+//		{ 
+//			if(contractExpiry <= EXITHOURS/24.) exitShort();
 //		}
 //	}
-//	
-//	if(dow()==2) printf("\n %i %i",NumOpenLong,NumOpenShort);
+	
+	
+	for(current_trades)
+	{
+		if(contractExpiry <= EXITHOURS/24.) 
+		{
+			exitLong(); exitShort();
+			break_trades;
+		} 
+		
+//		else if(!(TradeIsCall or TradeIsPut) and TradeIsOpen)
+		else if(!(TradeIsCall or TradeIsPut))
+		{
+			if(CenterPrice<CallStrike*(1-HYSTFCT)) exitLong("u");
+			if(CenterPrice>PutStrike*(1+HYSTFCT)) exitShort("u");
+		}
 
+	}
+	
+
+}
 }
