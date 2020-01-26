@@ -53,6 +53,36 @@
 
 #define EXITHOURS					24
 
+
+function udlLong()
+{
+	int numUdlLong;
+	for(current_trades) 
+	{
+		if(!(TradeIsCall or TradeIsPut))
+		{
+			if(TradeIsLong) numUdlLong = numUdlLong+1;
+		}
+	}
+	
+	return numUdlLong;
+}
+
+function udlShort()
+{
+	int numUdlShort;
+	
+	for(current_trades) 
+	{
+		if(!(TradeIsCall or TradeIsPut))
+		{
+			if(TradeIsShort) numUdlShort = numUdlShort+1;
+		}
+	}
+	
+	return numUdlShort;
+}
+
 function run()
 {
 	set(PLOTNOW);
@@ -100,7 +130,7 @@ function run()
 	
 	int ExpireDays = optimize(EXPIREWEEKS*7,7,6*7,1);
 	
-	//Setup Strangle
+	//Setup and enter Strangle
 	if(NumOpenShort == 0 and NumOpenLong == 0 and dow()==1) 
 	{
 		var CallStrikeCall = contractStrike(CALL,ExpireDays,CenterPrice,HistVol,RISKFREE,deltaCall/100.);
@@ -116,7 +146,7 @@ function run()
 //			continue;
 		}
 
-// check for valid prices		
+	// check for valid prices		
 		int i;
 		for(i=1; i<=2; i++) 
 		{
@@ -162,7 +192,7 @@ function run()
 	if(bidVol>askVol) risingPrices=true;
 #endif
 	
-	static var CallStrike, PutStrike, contractExpiry=0;
+	static var CallStrike, PutStrike, contractExpiry=0.;
 	for(current_trades) 
 	{
 		if(TradeIsCall) 
@@ -182,10 +212,11 @@ function run()
 	
 ////	if(dow()==2) printf("\n%i",NumOpenTotal);
 
-	
-	if(NumOpenTotal==2 and contractExpiry > EXITHOURS/24.)
+	//removed NumOpenTotal - replaced with strike check and udlLong/short
+//		if(NumOpenTotal==2 and contractExpiry > EXITHOURS/24.)
+	if(CallStrike!=0 and PutStrike!=0 and contractExpiry > EXITHOURS/24.)
 	{
-		if(risingPrices==true and CenterPrice>CallStrike)
+		if(risingPrices==true and CenterPrice>CallStrike and udlLong()==0)
 		{
 			contract(0); //ONLY FOR PRILIMINARY TESTING
 	//		contract(FUTURE,contractExpiry,0);
@@ -196,8 +227,8 @@ function run()
 	//		printf("\nEnter %i long contracts with expiry of %.0f days.",CONTRACTSCALL,contractExpiry);
 //			plot("hedge call",CenterPrice*1.1,MAIN|DOT,RED);
 		}
-	//	else if(risingPrices==false and CenterPrice<PutStrike)
-		else if(risingPrices==true and CenterPrice<PutStrike) //ONLY FOR PRIMARY TESTING
+	//	else if(risingPrices==false and CenterPrice<PutStrike and udlShort()==0)
+		else if(risingPrices==true and CenterPrice<PutStrike and udlShort()==0) //ONLY FOR PRIMARY TESTING
 		{
 			contract(0); //ONLY FOR PRILIMINARY TESTING
 	//		contract(FUTURE,contractExpiry,0);
@@ -209,15 +240,57 @@ function run()
 		}
 	}
 	
-	if(contractExpiry <= EXITHOURS/24.) 
+	for(current_trades)
 	{
-		for(current_trades)
+		if(!(TradeIsCall or TradeIsPut) and TradeIsOpen)
 		{
-			if(!(TradeIsCall or TradeIsPut)) //probably not needed
-				exitLong(); exitShort();
+			if(CenterPrice<CallStrike or contractExpiry <= EXITHOURS/24.) exitLong("u");
+			if(CenterPrice>PutStrike or contractExpiry <= EXITHOURS/24.) exitShort("u");
 		}
 	}
 	
+//	plot("CenterPrice",CenterPrice,NEW,RED);
+//	plot("CallStrike",CallStrike,NEW,RED);
+//	plot("PutStrike",PutStrike,NEW,RED);
+	
+	
+//	if(CenterPrice<CallStrike) //check CallStrike !=0 too?
+//	{
+//		contract(0);
+//		exitLong("udl");
+//	}
+////	plot("CenterPrice",CenterPrice,NEW,BLUE);
+////	if(PutStrike>0) plot("PutStrike",PutStrike,0,RED);
+// 	
+// 	if(CenterPrice>PutStrike) 
+//	{
+////		plot("hedge put",CenterPrice*0.9,MAIN|DOT,BLUE);
+//		contract(0);
+//		exitShort("udl");
+//	}
+	
+	plot("contractExpiry",contractExpiry,NEW,RED);
+//	if(contractExpiry <= EXITHOURS/24.) 
+//	{
+////		plot("hedge put",CenterPrice*0.9,MAIN|DOT,BLUE);
+//		int longs=udlLong();
+//		int shorts=udlShort();
+//////		//DOES NOT WORK
+////		contract(0);
+////		exitLong("exp"); 
+////		exitShort("exp");
+////		//replaced with contract(0) above -->
+//		for(current_trades)
+//		{
+//			if(!(TradeIsCall or TradeIsPut) or (NumOpenTotal==(longs+shorts))) //probably not needed
+//			{
+//				exitLong(); 
+//				exitShort();
+//			}
+//				
+//		}
+//	}
+//	
 //	if(dow()==2) printf("\n %i %i",NumOpenLong,NumOpenShort);
 
 }
